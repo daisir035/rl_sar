@@ -79,6 +79,11 @@ RL_Sim::RL_Sim(int argc, char **argv)
 
     this->mj_model = m;
     this->mj_data = d;
+    if (this->mj_model && this->mj_data)
+    {
+        mj_resetDataKeyframe(this->mj_model, this->mj_data, 0);
+        mj_forward(this->mj_model, this->mj_data);
+    }
     this->SetupSysJoystick("/dev/input/js0", 16); // 16 bits joystick
 
     // read params from yaml
@@ -200,7 +205,7 @@ void RL_Sim::RobotControl()
     {
         if (this->mj_model && this->mj_data)
         {
-            mj_resetData(this->mj_model, this->mj_data);
+            mj_resetDataKeyframe(this->mj_model, this->mj_data, 0);
             mj_forward(this->mj_model, this->mj_data);
         }
     }
