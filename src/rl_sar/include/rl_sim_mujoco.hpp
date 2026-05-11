@@ -21,6 +21,12 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <thread>
+#include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -101,6 +107,17 @@ private:
     std::string gazebo_model_name;
     std::map<std::string, float> joint_positions;
     std::map<std::string, float> joint_velocities;
+
+    // UDP remote control (mobile web)
+    int udp_socket_fd = -1;
+    std::thread udp_thread;
+    std::atomic<bool> udp_running{false};
+    std::atomic<float> udp_cmd_x{0.0f};
+    std::atomic<float> udp_cmd_y{0.0f};
+    std::atomic<float> udp_cmd_yaw{0.0f};
+    std::atomic<int> udp_cmd_state{0}; // 0=none, 1=getup, 2=locomotion, 3=getdown, 4=passive
+    void StartUdpServer();
+    void UdpReceiveLoop();
     std::map<std::string, float> joint_efforts;
     void StartJointController(const std::string& ros_namespace, const std::vector<std::string>& names);
 };

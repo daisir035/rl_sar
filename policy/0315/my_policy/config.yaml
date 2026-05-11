@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 0315/my_policy:
-  model_name: "policy.pt"
+  model_name: "model_800.pt"
   num_observations: 57
   observations: ["ang_vel", "gravity_vec", "commands", "dof_pos", "dof_vel", "actions"]
   observations_history: []
@@ -27,4 +27,4 @@
                   33.5, 33.5, 33.5, 33.5,
                   33.5, 33.5, 33.5, 33.5]
   default_dof_pos: [ 0.0, 0.75, -1.5, 0.0, 0.75, -1.5, 0.0, -0.75, 1.5, 0.0, -0.75, 1.5, 0.0, 0.0, 0.0, 0.0]
-  joint_mapping: [4, 5, 6, 0, 1, 2, 12, 13, 14, 8, 9, 10, 7, 3, 15, 11]  
+  joint_mapping: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15]

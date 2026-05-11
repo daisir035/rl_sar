@@ -135,6 +135,9 @@ RL_Sim::RL_Sim(int argc, char **argv)
     this->CSVInit(this->robot_name);
 #endif
 
+    // Start UDP remote control server
+    this->StartUdpServer();
+
     std::cout << LOGGER::INFO << "RL_Sim start" << std::endl;
 
     // start simulation UI loop (blocking call)
@@ -145,6 +148,18 @@ RL_Sim::~RL_Sim()
 {
     // Clear static instance pointer
     instance = nullptr;
+
+    // Shutdown UDP server
+    udp_running.store(false);
+    if (udp_socket_fd >= 0)
+    {
+        close(udp_socket_fd);
+        udp_socket_fd = -1;
+    }
+    if (udp_thread.joinable())
+    {
+        udp_thread.join();
+    }
 
     this->loop_keyboard->shutdown();
     this->loop_joystick->shutdown();
@@ -198,6 +213,29 @@ void RL_Sim::RobotControl()
     const std::lock_guard<std::recursive_mutex> lock(sim->mtx);
 
     this->GetState(&this->robot_state);
+
+    // Apply UDP remote control commands BEFORE StateController
+    float ux = this->udp_cmd_x.load();
+    float uy = this->udp_cmd_y.load();
+    float uyaw = this->udp_cmd_yaw.load();
+    // UDP non-zero overrides everything; UDP zero only applies if joystick is not active
+    // (avoids getting stuck when releasing the on-screen joystick)
+    if (ux != 0.0f || uy != 0.0f || uyaw != 0.0f || !this->sys_js_active)
+    {
+        this->control.x = ux;
+        this->control.y = uy;
+        this->control.yaw = uyaw;
+    }
+
+    int ustate = this->udp_cmd_state.exchange(0);
+    switch (ustate)
+    {
+        case 1: this->control.SetKeyboard(Input::Keyboard::Num0); break;
+        case 2: this->control.SetKeyboard(Input::Keyboard::Num1); break;
+        case 3: this->control.SetKeyboard(Input::Keyboard::Num9); break;
+        case 4: this->control.SetKeyboard(Input::Keyboard::P); break;
+        default: break;
+    }
 
     this->StateController(&this->robot_state, &this->robot_command);
 
@@ -432,6 +470,101 @@ void RL_Sim::Plot()
     }
     // plt::legend();
     plt::pause(0.01);
+}
+
+void RL_Sim::StartUdpServer()
+{
+    udp_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_socket_fd < 0)
+    {
+        std::cout << LOGGER::WARNING << "[UDP] Failed to create socket" << std::endl;
+        return;
+    }
+
+    int opt = 1;
+    setsockopt(udp_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+    struct sockaddr_in server_addr;
+    std::memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(9876);
+
+    if (bind(udp_socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0)
+    {
+        std::cout << LOGGER::WARNING << "[UDP] Failed to bind to port 9876" << std::endl;
+        close(udp_socket_fd);
+        udp_socket_fd = -1;
+        return;
+    }
+
+    udp_running.store(true);
+    udp_thread = std::thread(&RL_Sim::UdpReceiveLoop, this);
+    std::cout << LOGGER::INFO << "[UDP] Remote control server started on port 9876" << std::endl;
+}
+
+void RL_Sim::UdpReceiveLoop()
+{
+    char buffer[256];
+    struct sockaddr_in client_addr;
+    socklen_t addr_len = sizeof(client_addr);
+
+    while (udp_running.load())
+    {
+        ssize_t len = recvfrom(udp_socket_fd, buffer, sizeof(buffer) - 1, 0,
+                               (struct sockaddr*)&client_addr, &addr_len);
+        if (len > 0)
+        {
+            buffer[len] = '\0';
+            std::string msg(buffer);
+
+            float x = 0.0f, y = 0.0f, yaw = 0.0f;
+            std::string state_str;
+
+            size_t pos = 0;
+            while (pos < msg.length())
+            {
+                size_t eq = msg.find('=', pos);
+                if (eq == std::string::npos) break;
+                size_t amp = msg.find('&', eq);
+                if (amp == std::string::npos) amp = msg.length();
+
+                std::string key = msg.substr(pos, eq - pos);
+                std::string value = msg.substr(eq + 1, amp - eq - 1);
+
+                try
+                {
+                    if (key == "x") x = std::stof(value);
+                    else if (key == "y") y = std::stof(value);
+                    else if (key == "yaw") yaw = std::stof(value);
+                    else if (key == "state") state_str = value;
+                }
+                catch (...)
+                {
+                    // ignore parse errors
+                }
+
+                pos = amp + 1;
+            }
+
+            udp_cmd_x.store(x);
+            udp_cmd_y.store(y);
+            udp_cmd_yaw.store(yaw);
+
+            if (state_str == "getup") udp_cmd_state.store(1);
+            else if (state_str == "locomotion") udp_cmd_state.store(2);
+            else if (state_str == "getdown") udp_cmd_state.store(3);
+            else if (state_str == "passive") udp_cmd_state.store(4);
+
+            // Send ack back
+            const char* ack = "ok";
+            sendto(udp_socket_fd, ack, 2, 0, (struct sockaddr*)&client_addr, addr_len);
+        }
+        else if (len < 0 && errno != EAGAIN && errno != EINTR)
+        {
+            break;
+        }
+    }
 }
 
 // Signal handler for Ctrl+C
