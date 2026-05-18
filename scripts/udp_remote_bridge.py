@@ -95,15 +95,43 @@ HTML_PAGE = """<!DOCTYPE html>
     display: flex; justify-content: space-between;
     font-size: 0.8rem; color: #aaa; padding: 4px 2px;
   }
+  .sliders {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    background: #16213e; padding: 8px; border-radius: 10px;
+  }
+  .slider-row {
+    display: flex; align-items: center; gap: 6px;
+  }
+  .slider-row label {
+    font-size: 0.75rem; color: #888; min-width: 60px;
+  }
+  .slider-row input[type=range] {
+    flex: 1;
+  }
+  .slider-row span {
+    font-size: 0.75rem; color: #4ecca3; min-width: 28px; text-align: right;
+  }
 </style>
 </head>
 <body>
-<header>0315 Remote Control</header>
+<header>rl_sar Remote Control</header>
 <div class="status" id="status">Connecting...</div>
 <div class="main">
   <div class="info">
     <span id="vel-display">VEL: x=0.00 y=0.00 yaw=0.00</span>
     <span id="state-display">State: —</span>
+  </div>
+  <div class="sliders">
+    <div class="slider-row">
+      <label>Move</label>
+      <input type="range" id="max-move" min="0.1" max="3.0" step="0.1" value="1.5">
+      <span id="val-move">1.5</span>
+    </div>
+    <div class="slider-row">
+      <label>Yaw</label>
+      <input type="range" id="max-yaw" min="0.1" max="3.0" step="0.1" value="1.0">
+      <span id="val-yaw">1.0</span>
+    </div>
   </div>
   <div class="joystick-area">
     <div class="pad" id="pad-move">
@@ -129,6 +157,8 @@ const stateEl = document.getElementById('state-display');
 
 let cmd = { x: 0.0, y: 0.0, yaw: 0.0 };
 let lastSent = '';
+let maxMove = 1.5;
+let maxYaw = 1.0;
 
 function sendCmd() {
   const payload = `x=${cmd.x.toFixed(2)}&y=${cmd.y.toFixed(2)}&yaw=${cmd.yaw.toFixed(2)}`;
@@ -153,7 +183,7 @@ function updateVelDisplay() {
 
 setInterval(sendCmd, 50); // 20 Hz
 
-function setupPad(element, axisX, axisY, maxVal) {
+function setupPad(element, axisX, axisY, maxValGetter) {
   const knob = element.querySelector('.knob');
   const rect = () => element.getBoundingClientRect();
   let active = false;
@@ -183,8 +213,9 @@ function setupPad(element, axisX, axisY, maxVal) {
 
     const nx = dx / radius;
     const ny = dy / radius;
-    if (axisX !== null) cmd[axisX] = parseFloat((-nx * maxVal).toFixed(2));
-    if (axisY !== null) cmd[axisY] = parseFloat((-ny * maxVal).toFixed(2)); // Y up is negative in screen coords
+    const mv = maxValGetter();
+    if (axisX !== null) cmd[axisX] = parseFloat((-nx * mv).toFixed(2));
+    if (axisY !== null) cmd[axisY] = parseFloat((-ny * mv).toFixed(2)); // Y up is negative in screen coords
     updateVelDisplay();
   }
   function end(e) {
@@ -205,8 +236,22 @@ function setupPad(element, axisX, axisY, maxVal) {
   window.addEventListener('mouseup', end);
 }
 
-setupPad(document.getElementById('pad-move'), 'y', 'x', 1.5);
-setupPad(document.getElementById('pad-rotate'), 'yaw', null, 2.0);
+const moveSlider = document.getElementById('max-move');
+const yawSlider = document.getElementById('max-yaw');
+const moveVal = document.getElementById('val-move');
+const yawVal = document.getElementById('val-yaw');
+
+moveSlider.addEventListener('input', () => {
+  maxMove = parseFloat(moveSlider.value);
+  moveVal.textContent = maxMove.toFixed(1);
+});
+yawSlider.addEventListener('input', () => {
+  maxYaw = parseFloat(yawSlider.value);
+  yawVal.textContent = maxYaw.toFixed(1);
+});
+
+setupPad(document.getElementById('pad-move'), 'y', 'x', () => maxMove);
+setupPad(document.getElementById('pad-rotate'), 'yaw', null, () => maxYaw);
 
 document.querySelectorAll('.btn[data-state]').forEach(btn => {
   btn.addEventListener('click', () => {
