@@ -83,6 +83,33 @@ RL_Sim::RL_Sim(int argc, char **argv)
     {
         mj_resetDataKeyframe(this->mj_model, this->mj_data, 0);
         mj_forward(this->mj_model, this->mj_data);
+
+        // Auto-enable camera tracking on torso
+        const char* torso_names[] = {"base_link", "pelvis", "trunk", "torso", "base"};
+        int track_body_id = -1;
+        for (const char* name : torso_names)
+        {
+            track_body_id = mj_name2id(this->mj_model, mjOBJ_BODY, name);
+            if (track_body_id >= 0)
+            {
+                std::cout << LOGGER::INFO << "[MuJoCo] Camera tracking enabled on body: " << name
+                          << " (id=" << track_body_id << ")" << std::endl;
+                break;
+            }
+        }
+        if (track_body_id >= 0)
+        {
+            cam.type = mjCAMERA_TRACKING;
+            cam.trackbodyid = track_body_id;
+            cam.fixedcamid = -1;
+            cam.distance = 2.5f;
+            cam.azimuth = 135;
+            cam.elevation = -20;
+        }
+        else
+        {
+            std::cout << LOGGER::WARNING << "[MuJoCo] No torso body found for camera tracking" << std::endl;
+        }
     }
     this->SetupSysJoystick("/dev/input/js0", 16); // 16 bits joystick
 
