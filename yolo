@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Quick launcher for rl_sar pro GUI
+
+cd "$(dirname "$0")"
+
+if [ "$1" == "progui" ] || [ "$1" == "pro" ]; then
+    echo "Launching sim2sim_gui_pro.py ..."
+    python3 scripts/sim2sim_gui_pro.py
+else
+    echo "Usage: ./yolo progui"
+    echo "       ./yolo pro"
+    exit 1
+fi

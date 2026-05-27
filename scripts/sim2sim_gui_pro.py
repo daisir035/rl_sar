@@ -22,7 +22,8 @@ import re
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGroupBox, QComboBox, QPushButton, QTextEdit, QLabel, QStatusBar,
-    QCheckBox, QTabWidget, QSplitter, QSizePolicy
+    QCheckBox, QTabWidget, QSplitter, QSizePolicy, QFileDialog, QMessageBox,
+    QSpinBox
 )
 from PyQt5.QtCore import Qt, QProcess, QTimer, QUrl
 from PyQt5.QtGui import QFont, QTextCursor, QIcon, QColor, QTextCharFormat
@@ -264,6 +265,37 @@ class Sim2SimGUIPro(QMainWindow):
         self.build_log = LogPanel(max_height=100)
         layout.addWidget(self.build_log)
 
+        # --- Terrain generation ---
+        terrain_group = QGroupBox("Terrain Generation")
+        tl = QHBoxLayout()
+        tl.addWidget(QLabel("Preset:"))
+        self.terrain_preset_combo = QComboBox()
+        self.terrain_preset_combo.addItems([
+            "flat", "stairs", "suspend_stairs", "slope", "rough_ground",
+            "obstacles", "perlin_hfield", "image_hfield", "mixed", "extreme"
+        ])
+        self.terrain_preset_combo.setToolTip("Select terrain type to generate")
+        tl.addWidget(self.terrain_preset_combo, 1)
+
+        tl.addWidget(QLabel("Seed:"))
+        self.terrain_seed_spin = QSpinBox()
+        self.terrain_seed_spin.setRange(0, 999999)
+        self.terrain_seed_spin.setValue(42)
+        self.terrain_seed_spin.setSpecialValueText("Random")
+        tl.addWidget(self.terrain_seed_spin)
+
+        self.btn_generate_terrain = QPushButton("Generate")
+        self.btn_generate_terrain.setToolTip("Generate terrain scene XML (Ctrl+G)")
+        self.btn_generate_terrain.setShortcut("Ctrl+G")
+        self.btn_generate_terrain.clicked.connect(self._generate_terrain)
+        tl.addWidget(self.btn_generate_terrain)
+
+        self.lbl_terrain_status = QLabel("")
+        self.lbl_terrain_status.setStyleSheet("color: #4CAF50; font-size: 11px;")
+        tl.addWidget(self.lbl_terrain_status)
+        terrain_group.setLayout(tl)
+        layout.addWidget(terrain_group)
+
         # --- Simulation config ---
         sim_group = QGroupBox("Simulation")
         sl = QVBoxLayout()
@@ -295,6 +327,11 @@ class Sim2SimGUIPro(QMainWindow):
         self.model_combo = QComboBox()
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         row_pol.addWidget(self.model_combo, 1)
+
+        self.btn_browse = QPushButton("Browse...")
+        self.btn_browse.setToolTip("Select model file from any location")
+        self.btn_browse.clicked.connect(self._browse_model)
+        row_pol.addWidget(self.btn_browse)
 
         self.btn_convert = QPushButton("Convert")
         self.btn_convert.setToolTip("Convert training checkpoint to TorchScript")
@@ -542,6 +579,66 @@ class Sim2SimGUIPro(QMainWindow):
             self.btn_convert.setEnabled(True)
             self.btn_convert.setText("Convert")
 
+    def _browse_model(self):
+        """Open file dialog to select a .pt or .onnx from any location."""
+        robot = self.robot_combo.currentText()
+        policy = self.policy_combo.currentText()
+        if not robot or not policy:
+            self.sim_log.append_log_colored(
+                "Error: select a robot and policy first\n", QColor(241, 76, 76)
+            )
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Model File",
+            "",
+            "Model Files (*.pt *.onnx);;PyTorch (*.pt);;ONNX (*.onnx);;All Files (*)",
+        )
+        if not file_path:
+            return
+
+        policy_dir = os.path.join(PROJECT_ROOT, "policy", robot, policy)
+        os.makedirs(policy_dir, exist_ok=True)
+
+        filename = os.path.basename(file_path)
+        dst = os.path.join(policy_dir, filename)
+
+        if os.path.abspath(file_path) == os.path.abspath(dst):
+            self.populate_models(robot, policy)
+            idx = self.model_combo.findText(filename)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
+            return
+
+        if os.path.exists(dst):
+            reply = QMessageBox.question(
+                self,
+                "File Exists",
+                f'"{filename}" already exists in the policy directory. Overwrite?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        try:
+            import shutil
+            shutil.copy2(file_path, dst)
+            self.sim_log.append_log_colored(
+                f">>> Copied model to policy dir: {filename}\n", QColor(35, 209, 139)
+            )
+        except Exception as e:
+            self.sim_log.append_log_colored(
+                f">>> Failed to copy model: {e}\n", QColor(241, 76, 76)
+            )
+            return
+
+        self.populate_models(robot, policy)
+        idx = self.model_combo.findText(filename)
+        if idx >= 0:
+            self.model_combo.setCurrentIndex(idx)
+
     def _convert_current_checkpoint(self):
         """Convert selected model to TorchScript (checkpoint or ONNX)."""
         robot = self.robot_combo.currentText()
@@ -673,6 +770,51 @@ class Sim2SimGUIPro(QMainWindow):
                 if xml_file.endswith(".xml"):
                     scenes.append(f"{subdir}/{xml_file[:-4]}")
         self.scene_combo.addItems(scenes)
+
+    def _generate_terrain(self):
+        """Generate terrain scene XML using terrain_generator.py."""
+        robot = self.robot_combo.currentText()
+        if not robot:
+            self.sim_log.append_log_colored("Error: select a robot first\n", QColor(241, 76, 76))
+            return
+
+        preset = self.terrain_preset_combo.currentText()
+        seed = self.terrain_seed_spin.value()
+        if seed == 0 and self.terrain_seed_spin.specialValueText() == "Random":
+            import random
+            seed = random.randint(1, 999999)
+
+        self.sim_log.append_log_colored(f">>> Generating terrain: {preset} (seed={seed}) for {robot}...\n", QColor(17, 168, 205))
+        self.status_bar.showMessage(f"Generating terrain: {preset}")
+
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "terrain_generator",
+                os.path.join(PROJECT_ROOT, "scripts", "terrain_generator.py")
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            tg = mod.TerrainGenerator(robot)
+            tg.generate(preset, seed=seed)
+            output_name = f"scene_{preset}_s{seed}"
+            path = tg.save(output_name)
+
+            self.sim_log.append_log_colored(f">>> Terrain saved: {path}\n", QColor(35, 209, 139))
+            self.lbl_terrain_status.setText(f"Generated: {output_name}")
+            self.status_bar.showMessage("Terrain generated")
+
+            # Refresh scenes and select the newly generated one
+            self.populate_scenes(robot)
+            idx = self.scene_combo.findText(output_name)
+            if idx >= 0:
+                self.scene_combo.setCurrentIndex(idx)
+        except Exception as e:
+            self.sim_log.append_log_colored(f">>> Terrain generation failed: {e}\n", QColor(241, 76, 76))
+            self.status_bar.showMessage("Terrain generation failed")
+            import traceback
+            self.sim_log.append_log(traceback.format_exc())
 
     def _update_policy_info(self, robot_name):
         policy_dir = os.path.join(PROJECT_ROOT, "policy", robot_name)
